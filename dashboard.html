@@ -1,0 +1,1135 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NetWatch — Network Intelligence</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Mono:ital,wght@0,400;0,700;1,400&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #060810;
+    --surface: #0c0f1a;
+    --surface2: #111525;
+    --border: rgba(99,179,237,0.12);
+    --border-bright: rgba(99,179,237,0.35);
+    --accent: #38bdf8;
+    --accent2: #818cf8;
+    --danger: #f43f5e;
+    --warn: #fb923c;
+    --ok: #34d399;
+    --text: #e2e8f0;
+    --muted: #64748b;
+    --mono: 'Space Mono', monospace;
+    --sans: 'DM Sans', sans-serif;
+    --glow: 0 0 20px rgba(56,189,248,0.15);
+    --glow-danger: 0 0 30px rgba(244,63,94,0.3);
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  /* scanline effect */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,0,0,0.03) 2px, rgba(0,0,0,0.03) 4px);
+    pointer-events: none;
+    z-index: 9999;
+  }
+
+  /* grid background */
+  body::after {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background-image:
+      linear-gradient(rgba(56,189,248,0.03) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(56,189,248,0.03) 1px, transparent 1px);
+    background-size: 40px 40px;
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  /* ─── HEADER ─────────────────────────────────────────────── */
+  header {
+    position: sticky; top: 0; z-index: 100;
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 0 2rem;
+    height: 60px;
+    background: rgba(6,8,16,0.9);
+    border-bottom: 1px solid var(--border);
+    backdrop-filter: blur(12px);
+  }
+
+  .logo {
+    display: flex; align-items: center; gap: 10px;
+    font-family: var(--mono);
+    font-size: 1.1rem;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    color: var(--accent);
+  }
+
+  .logo-icon {
+    width: 28px; height: 28px;
+    background: var(--accent);
+    clip-path: polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%);
+    display: flex; align-items: center; justify-content: center;
+    animation: pulse-hex 2s ease-in-out infinite;
+  }
+
+  @keyframes pulse-hex {
+    0%,100% { box-shadow: 0 0 0 0 rgba(56,189,248,0.4); }
+    50% { box-shadow: 0 0 0 8px rgba(56,189,248,0); }
+  }
+
+  .header-status {
+    display: flex; align-items: center; gap: 1.5rem;
+    font-family: var(--mono); font-size: 0.7rem; color: var(--muted);
+  }
+
+  .status-dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--ok);
+    box-shadow: 0 0 8px var(--ok);
+    animation: blink 1.5s ease-in-out infinite;
+  }
+
+  .status-dot.danger { background: var(--danger); box-shadow: 0 0 8px var(--danger); }
+
+  @keyframes blink { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
+
+  .clock { color: var(--accent); letter-spacing: 0.05em; }
+
+  /* ─── LAYOUT ─────────────────────────────────────────────── */
+  main {
+    position: relative; z-index: 1;
+    display: grid;
+    grid-template-columns: 280px 1fr;
+    grid-template-rows: auto auto 1fr;
+    gap: 1px;
+    min-height: calc(100vh - 60px);
+  }
+
+  /* ─── SIDEBAR ─────────────────────────────────────────────── */
+  .sidebar {
+    grid-row: 1 / -1;
+    background: var(--surface);
+    border-right: 1px solid var(--border);
+    display: flex; flex-direction: column; gap: 0;
+    overflow-y: auto;
+  }
+
+  .sidebar-section {
+    padding: 1.25rem 1.5rem;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .sidebar-label {
+    font-family: var(--mono);
+    font-size: 0.6rem;
+    letter-spacing: 0.15em;
+    color: var(--muted);
+    text-transform: uppercase;
+    margin-bottom: 1rem;
+  }
+
+  /* KPI Cards */
+  .kpi-card {
+    padding: 1rem;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    margin-bottom: 0.75rem;
+    position: relative;
+    overflow: hidden;
+    transition: border-color 0.3s;
+  }
+
+  .kpi-card::before {
+    content: '';
+    position: absolute;
+    left: 0; top: 0; bottom: 0;
+    width: 3px;
+    background: var(--accent);
+    transition: background 0.3s;
+  }
+
+  .kpi-card.danger::before { background: var(--danger); }
+  .kpi-card.danger { border-color: rgba(244,63,94,0.3); box-shadow: var(--glow-danger); }
+  .kpi-card.warn::before { background: var(--warn); }
+
+  .kpi-label {
+    font-family: var(--mono);
+    font-size: 0.6rem;
+    letter-spacing: 0.1em;
+    color: var(--muted);
+    text-transform: uppercase;
+    margin-bottom: 0.4rem;
+  }
+
+  .kpi-value {
+    font-family: var(--mono);
+    font-size: 1.5rem;
+    font-weight: 700;
+    color: var(--accent);
+    line-height: 1;
+    transition: color 0.3s;
+  }
+
+  .kpi-card.danger .kpi-value { color: var(--danger); }
+  .kpi-card.warn .kpi-value { color: var(--warn); }
+
+  .kpi-unit {
+    font-size: 0.65rem;
+    color: var(--muted);
+    margin-left: 3px;
+  }
+
+  .kpi-delta {
+    font-family: var(--mono);
+    font-size: 0.65rem;
+    margin-top: 0.3rem;
+  }
+  .kpi-delta.up { color: var(--danger); }
+  .kpi-delta.down { color: var(--ok); }
+
+  /* ─── ALERT PANEL ─────────────────────────────────────────── */
+  .alerts-list {
+    display: flex; flex-direction: column; gap: 0.5rem;
+    max-height: 380px;
+    overflow-y: auto;
+  }
+
+  .alert-item {
+    padding: 0.6rem 0.75rem;
+    border-radius: 4px;
+    border-left: 3px solid;
+    background: rgba(255,255,255,0.03);
+    font-size: 0.75rem;
+    animation: slide-in 0.3s ease;
+  }
+
+  @keyframes slide-in {
+    from { transform: translateX(-10px); opacity: 0; }
+    to { transform: translateX(0); opacity: 1; }
+  }
+
+  .alert-item.critical { border-color: var(--danger); }
+  .alert-item.high { border-color: var(--warn); }
+  .alert-item.medium { border-color: var(--accent); }
+
+  .alert-level {
+    font-family: var(--mono);
+    font-size: 0.55rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    margin-bottom: 0.2rem;
+  }
+  .alert-item.critical .alert-level { color: var(--danger); }
+  .alert-item.high .alert-level { color: var(--warn); }
+
+  .alert-title { color: var(--text); font-weight: 500; margin-bottom: 0.15rem; }
+  .alert-ip { font-family: var(--mono); color: var(--muted); font-size: 0.65rem; }
+
+  /* ─── MAIN CONTENT ────────────────────────────────────────── */
+  .content-area {
+    display: flex; flex-direction: column; gap: 1px;
+    background: var(--border);
+    overflow: hidden;
+  }
+
+  /* ─── CHART ROW ───────────────────────────────────────────── */
+  .charts-row {
+    display: grid;
+    grid-template-columns: 2fr 1fr;
+    gap: 1px;
+    background: var(--border);
+  }
+
+  .panel {
+    background: var(--surface);
+    padding: 1.5rem;
+  }
+
+  .panel-header {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 1.25rem;
+  }
+
+  .panel-title {
+    font-family: var(--mono);
+    font-size: 0.7rem;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+
+  .panel-badge {
+    font-family: var(--mono);
+    font-size: 0.6rem;
+    padding: 2px 8px;
+    border-radius: 2px;
+    background: rgba(56,189,248,0.1);
+    color: var(--accent);
+    border: 1px solid rgba(56,189,248,0.2);
+  }
+
+  canvas { width: 100% !important; }
+
+  /* ─── IP TABLE ────────────────────────────────────────────── */
+  .ip-table-wrap { overflow-x: auto; }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.75rem;
+  }
+
+  th {
+    font-family: var(--mono);
+    font-size: 0.6rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--muted);
+    padding: 0.5rem 0.75rem;
+    text-align: left;
+    border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+  }
+
+  td {
+    padding: 0.5rem 0.75rem;
+    border-bottom: 1px solid rgba(99,179,237,0.05);
+    font-family: var(--mono);
+    font-size: 0.7rem;
+    vertical-align: middle;
+    white-space: nowrap;
+  }
+
+  tr:hover td { background: rgba(56,189,248,0.04); }
+
+  .ip-badge {
+    display: inline-flex; align-items: center; gap: 5px;
+    padding: 2px 8px;
+    border-radius: 3px;
+    font-size: 0.65rem;
+  }
+
+  .ip-badge.malicious {
+    background: rgba(244,63,94,0.15);
+    color: var(--danger);
+    border: 1px solid rgba(244,63,94,0.3);
+    animation: flash-red 1s ease-in-out infinite;
+  }
+
+  @keyframes flash-red { 0%,100% { opacity: 1; } 50% { opacity: 0.6; } }
+
+  .ip-badge.external {
+    background: rgba(56,189,248,0.1);
+    color: var(--accent);
+    border: 1px solid rgba(56,189,248,0.2);
+  }
+
+  .ip-badge.internal {
+    background: rgba(52,211,153,0.1);
+    color: var(--ok);
+    border: 1px solid rgba(52,211,153,0.2);
+  }
+
+  .bar-cell { min-width: 80px; }
+  .mini-bar {
+    height: 4px;
+    border-radius: 2px;
+    background: rgba(56,189,248,0.2);
+    position: relative;
+    overflow: hidden;
+  }
+  .mini-bar-fill {
+    height: 100%;
+    border-radius: 2px;
+    background: var(--accent);
+    transition: width 0.5s ease;
+  }
+  .mini-bar-fill.danger { background: var(--danger); }
+
+  /* ─── DDOS BANNER ─────────────────────────────────────────── */
+  .ddos-banner {
+    display: none;
+    align-items: center; gap: 1rem;
+    padding: 0.75rem 2rem;
+    background: rgba(244,63,94,0.1);
+    border-top: 1px solid rgba(244,63,94,0.4);
+    border-bottom: 1px solid rgba(244,63,94,0.4);
+    animation: flash-bg 0.5s ease-in-out infinite alternate;
+  }
+
+  @keyframes flash-bg {
+    from { background: rgba(244,63,94,0.08); }
+    to { background: rgba(244,63,94,0.18); }
+  }
+
+  .ddos-banner.active { display: flex; }
+
+  .ddos-icon {
+    font-size: 1.2rem;
+  }
+
+  .ddos-text {
+    font-family: var(--mono);
+    font-size: 0.8rem;
+    font-weight: 700;
+    color: var(--danger);
+    letter-spacing: 0.08em;
+  }
+
+  .ddos-sub { font-size: 0.65rem; color: rgba(244,63,94,0.7); font-weight: 400; }
+
+  /* ─── BOTTOM ROW ──────────────────────────────────────────── */
+  .bottom-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 1px;
+    background: var(--border);
+  }
+
+  /* ─── GAUGE ───────────────────────────────────────────────── */
+  .gauge-wrap {
+    display: flex; flex-direction: column; align-items: center;
+    gap: 0.5rem;
+  }
+
+  .gauge-svg { width: 140px; height: 80px; }
+
+  .gauge-value {
+    font-family: var(--mono);
+    font-size: 1.8rem;
+    font-weight: 700;
+    text-align: center;
+    color: var(--accent);
+    line-height: 1;
+    transition: color 0.3s;
+  }
+
+  .gauge-label {
+    font-family: var(--mono);
+    font-size: 0.6rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--muted);
+    text-align: center;
+  }
+
+  /* ─── PROTOCOL DOUGHNUT ───────────────────────────────────── */
+  .donut-wrap {
+    display: flex; align-items: center; gap: 1.5rem;
+  }
+
+  .donut-canvas-wrap { position: relative; width: 110px; height: 110px; flex-shrink: 0; }
+  .donut-canvas-wrap canvas { width: 110px !important; height: 110px !important; }
+
+  .legend { display: flex; flex-direction: column; gap: 0.4rem; }
+  .legend-item {
+    display: flex; align-items: center; gap: 0.5rem;
+    font-family: var(--mono); font-size: 0.65rem; color: var(--muted);
+  }
+  .legend-dot { width: 8px; height: 8px; border-radius: 2px; flex-shrink: 0; }
+
+  /* ─── SETTINGS MODAL ──────────────────────────────────────── */
+  .modal-overlay {
+    display: none;
+    position: fixed; inset: 0;
+    background: rgba(6,8,16,0.85);
+    backdrop-filter: blur(8px);
+    z-index: 1000;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .modal-overlay.open { display: flex; }
+
+  .modal {
+    background: var(--surface);
+    border: 1px solid var(--border-bright);
+    border-radius: 8px;
+    padding: 2rem;
+    width: 460px;
+    box-shadow: 0 0 60px rgba(56,189,248,0.1);
+    animation: modal-in 0.2s ease;
+  }
+
+  @keyframes modal-in {
+    from { transform: scale(0.95); opacity: 0; }
+    to { transform: scale(1); opacity: 1; }
+  }
+
+  .modal-title {
+    font-family: var(--mono);
+    font-size: 0.75rem;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin-bottom: 1.5rem;
+  }
+
+  .form-group { margin-bottom: 1rem; }
+
+  .form-label {
+    display: block;
+    font-family: var(--mono);
+    font-size: 0.6rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 0.4rem;
+  }
+
+  .form-input {
+    width: 100%;
+    padding: 0.5rem 0.75rem;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 0.75rem;
+    outline: none;
+    transition: border-color 0.2s;
+  }
+
+  .form-input:focus { border-color: var(--accent); }
+
+  .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; }
+
+  .btn {
+    padding: 0.5rem 1.25rem;
+    border-radius: 4px;
+    font-family: var(--mono);
+    font-size: 0.7rem;
+    letter-spacing: 0.08em;
+    cursor: pointer;
+    border: none;
+    transition: all 0.2s;
+    font-weight: 700;
+  }
+
+  .btn-primary {
+    background: var(--accent);
+    color: var(--bg);
+  }
+
+  .btn-primary:hover { background: #7dd3fc; box-shadow: 0 0 20px rgba(56,189,248,0.4); }
+
+  .btn-ghost {
+    background: transparent;
+    color: var(--muted);
+    border: 1px solid var(--border);
+  }
+
+  .btn-ghost:hover { border-color: var(--border-bright); color: var(--text); }
+
+  .modal-footer {
+    display: flex; justify-content: flex-end; gap: 0.75rem;
+    margin-top: 1.5rem;
+    padding-top: 1.25rem;
+    border-top: 1px solid var(--border);
+  }
+
+  /* ─── HEADER ACTIONS ──────────────────────────────────────── */
+  .header-actions { display: flex; gap: 0.5rem; }
+
+  .icon-btn {
+    width: 32px; height: 32px;
+    border-radius: 4px;
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--muted);
+    cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 0.85rem;
+    transition: all 0.2s;
+  }
+
+  .icon-btn:hover { border-color: var(--accent); color: var(--accent); box-shadow: var(--glow); }
+
+  /* ─── SCROLLBAR ───────────────────────────────────────────── */
+  ::-webkit-scrollbar { width: 4px; height: 4px; }
+  ::-webkit-scrollbar-track { background: var(--bg); }
+  ::-webkit-scrollbar-thumb { background: var(--border-bright); border-radius: 2px; }
+
+  /* ─── TOAST ───────────────────────────────────────────────── */
+  .toasts {
+    position: fixed; bottom: 1.5rem; right: 1.5rem;
+    display: flex; flex-direction: column-reverse; gap: 0.5rem;
+    z-index: 2000;
+  }
+
+  .toast {
+    padding: 0.75rem 1rem;
+    background: var(--surface);
+    border: 1px solid var(--border-bright);
+    border-left: 3px solid var(--accent);
+    border-radius: 4px;
+    font-size: 0.75rem;
+    font-family: var(--mono);
+    animation: toast-in 0.3s ease, toast-out 0.3s ease 3s forwards;
+    box-shadow: 0 4px 24px rgba(0,0,0,0.4);
+    max-width: 300px;
+  }
+
+  .toast.danger { border-left-color: var(--danger); }
+
+  @keyframes toast-in { from { transform: translateX(20px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+  @keyframes toast-out { from { opacity: 1; } to { opacity: 0; pointer-events: none; } }
+
+  .conn-bar-wrap { display: flex; align-items: center; gap: 6px; }
+  .conn-val { font-family: var(--mono); font-size: 0.65rem; color: var(--muted); min-width: 40px; text-align: right; }
+</style>
+</head>
+<body>
+
+<!-- ─── HEADER ──────────────────────────────────────────────────── -->
+<header>
+  <div class="logo">
+    <div class="logo-icon"></div>
+    NET<span style="color:var(--text)">WATCH</span>
+  </div>
+  <div class="header-status">
+    <div style="display:flex;align-items:center;gap:6px">
+      <div class="status-dot" id="statusDot"></div>
+      <span id="statusText">MONITORING ACTIVE</span>
+    </div>
+    <span>|</span>
+    <span class="clock" id="clockEl">--:--:--</span>
+    <span>|</span>
+    <span id="pktCounter">0 PKT/S</span>
+  </div>
+  <div class="header-actions">
+    <button class="icon-btn" onclick="openSettings()" title="Settings">⚙</button>
+    <button class="icon-btn" onclick="clearAlerts()" title="Clear Alerts">🗑</button>
+  </div>
+</header>
+
+<!-- ─── DDOS BANNER ─────────────────────────────────────────────── -->
+<div class="ddos-banner" id="ddosBanner">
+  <span class="ddos-icon">⚠️</span>
+  <div>
+    <div class="ddos-text">⚡ DDOS ATTACK IN PROGRESS</div>
+    <div class="ddos-sub" id="ddosDetail">Anomalous traffic spike detected — blocking in progress</div>
+  </div>
+</div>
+
+<!-- ─── MAIN LAYOUT ──────────────────────────────────────────────── -->
+<main>
+  <!-- SIDEBAR -->
+  <aside class="sidebar">
+    <div class="sidebar-section">
+      <div class="sidebar-label">// Live Metrics</div>
+
+      <div class="kpi-card" id="kpiCard-bw">
+        <div class="kpi-label">Bandwidth</div>
+        <div class="kpi-value" id="kpi-bw">0<span class="kpi-unit">Mbps</span></div>
+        <div class="kpi-delta" id="kpi-bw-delta">—</div>
+      </div>
+
+      <div class="kpi-card" id="kpiCard-pps">
+        <div class="kpi-label">Packets / sec</div>
+        <div class="kpi-value" id="kpi-pps">0<span class="kpi-unit">pps</span></div>
+        <div class="kpi-delta" id="kpi-pps-delta">—</div>
+      </div>
+
+      <div class="kpi-card" id="kpiCard-conn">
+        <div class="kpi-label">Active Connections</div>
+        <div class="kpi-value" id="kpi-conn">0</div>
+        <div class="kpi-delta" id="kpi-conn-delta">—</div>
+      </div>
+
+      <div class="kpi-card" id="kpiCard-latency">
+        <div class="kpi-label">Latency</div>
+        <div class="kpi-value" id="kpi-latency">0<span class="kpi-unit">ms</span></div>
+        <div class="kpi-delta" id="kpi-dropped">0 dropped pkts</div>
+      </div>
+    </div>
+
+    <div class="sidebar-section" style="flex:1;overflow:hidden;display:flex;flex-direction:column">
+      <div class="sidebar-label">// Alert Feed <span id="alertCount" style="color:var(--danger)"></span></div>
+      <div class="alerts-list" id="alertsList"></div>
+    </div>
+  </aside>
+
+  <!-- CONTENT -->
+  <div class="content-area">
+
+    <!-- Charts Row -->
+    <div class="charts-row">
+      <div class="panel">
+        <div class="panel-header">
+          <div class="panel-title">// Bandwidth Timeline</div>
+          <div class="panel-badge" id="bwBadge">NOMINAL</div>
+        </div>
+        <canvas id="bwChart" height="130"></canvas>
+      </div>
+      <div class="panel">
+        <div class="panel-header">
+          <div class="panel-title">// Protocol Distribution</div>
+        </div>
+        <div class="donut-wrap" style="margin-top:0.5rem">
+          <div class="donut-canvas-wrap">
+            <canvas id="protoChart"></canvas>
+          </div>
+          <div class="legend" id="protoLegend"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- IP Table Panel -->
+    <div class="panel" style="flex:1;overflow:hidden;display:flex;flex-direction:column">
+      <div class="panel-header">
+        <div class="panel-title">// Active IP Sessions</div>
+        <div style="display:flex;gap:0.5rem">
+          <div class="panel-badge" id="maliciousBadge" style="display:none;color:var(--danger);background:rgba(244,63,94,0.1);border-color:rgba(244,63,94,0.3)">⚠ THREATS DETECTED</div>
+          <div class="panel-badge" id="ipCountBadge">0 IPs</div>
+        </div>
+      </div>
+      <div class="ip-table-wrap" style="overflow-y:auto;flex:1">
+        <table>
+          <thead>
+            <tr>
+              <th>IP Address</th>
+              <th>Country</th>
+              <th>Type</th>
+              <th>Connections</th>
+              <th>Bandwidth</th>
+              <th>Packets</th>
+              <th>Share</th>
+            </tr>
+          </thead>
+          <tbody id="ipTableBody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Bottom Gauges -->
+    <div class="bottom-row">
+      <div class="panel" style="display:flex;flex-direction:column;align-items:center;justify-content:center">
+        <div class="panel-title" style="margin-bottom:1.25rem">// BW Utilization</div>
+        <div class="gauge-wrap">
+          <svg class="gauge-svg" viewBox="0 0 140 80">
+            <path d="M 14 70 A 56 56 0 0 1 126 70" fill="none" stroke="rgba(56,189,248,0.1)" stroke-width="10" stroke-linecap="round"/>
+            <path id="gaugePath" d="M 14 70 A 56 56 0 0 1 126 70" fill="none" stroke="var(--accent)" stroke-width="10" stroke-linecap="round" stroke-dasharray="175.9" stroke-dashoffset="175.9" style="transition:stroke-dashoffset 0.5s ease, stroke 0.3s"/>
+          </svg>
+          <div class="gauge-value" id="gaugeValue">0<span style="font-size:1rem">%</span></div>
+          <div class="gauge-label">of 1000 Mbps</div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-title" style="margin-bottom:1.25rem">// Packets / sec</div>
+        <canvas id="ppsChart" height="90"></canvas>
+      </div>
+
+      <div class="panel">
+        <div class="panel-title" style="margin-bottom:1rem">// Top Connections</div>
+        <div id="topConnList" style="display:flex;flex-direction:column;gap:0.5rem"></div>
+      </div>
+    </div>
+
+  </div>
+</main>
+
+<!-- ─── TOASTS ───────────────────────────────────────────────────── -->
+<div class="toasts" id="toasts"></div>
+
+<!-- ─── SETTINGS MODAL ───────────────────────────────────────────── -->
+<div class="modal-overlay" id="modalOverlay" onclick="if(event.target===this)closeSettings()">
+  <div class="modal">
+    <div class="modal-title">// System Configuration</div>
+
+    <div style="font-family:var(--mono);font-size:0.6rem;color:var(--muted);letter-spacing:0.12em;margin-bottom:0.75rem">THRESHOLDS</div>
+    <div class="form-row">
+      <div class="form-group">
+        <label class="form-label">Bandwidth (Mbps)</label>
+        <input type="number" class="form-input" id="cfgBw" value="900">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Packets/sec</label>
+        <input type="number" class="form-input" id="cfgPps" value="50000">
+      </div>
+    </div>
+    <div class="form-row">
+      <div class="form-group">
+        <label class="form-label">Connections / IP</label>
+        <input type="number" class="form-input" id="cfgConn" value="500">
+      </div>
+      <div class="form-group">
+        <label class="form-label">DDoS Spike Ratio</label>
+        <input type="number" step="0.1" class="form-input" id="cfgDdos" value="3.0">
+      </div>
+    </div>
+
+    <div style="font-family:var(--mono);font-size:0.6rem;color:var(--muted);letter-spacing:0.12em;margin:1rem 0 0.75rem">EMAIL ALERTS (SMTP)</div>
+    <div class="form-row">
+      <div class="form-group">
+        <label class="form-label">SMTP Host</label>
+        <input type="text" class="form-input" id="cfgSmtp" value="smtp.gmail.com">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Port</label>
+        <input type="number" class="form-input" id="cfgPort" value="587">
+      </div>
+    </div>
+    <div class="form-group">
+      <label class="form-label">Email Username</label>
+      <input type="email" class="form-input" id="cfgUser" placeholder="your@gmail.com">
+    </div>
+    <div class="form-group">
+      <label class="form-label">App Password</label>
+      <input type="password" class="form-input" id="cfgPass" placeholder="••••••••••••••••">
+    </div>
+    <div class="form-group">
+      <label class="form-label">Alert Recipient</label>
+      <input type="email" class="form-input" id="cfgRecipient" placeholder="admin@company.com">
+    </div>
+
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeSettings()">Cancel</button>
+      <button class="btn btn-primary" onclick="saveSettings()">Save Configuration</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ─── Socket.IO ───────────────────────────────────────────────────
+const socket = io();
+let lastBw = 0, lastPps = 0, lastConn = 0;
+let bwHistory = new Array(60).fill(0);
+let ppsHistory = new Array(30).fill(0);
+
+// ─── Clock ───────────────────────────────────────────────────────
+function updateClock() {
+  document.getElementById('clockEl').textContent = new Date().toLocaleTimeString('en-US', {hour12: false});
+}
+setInterval(updateClock, 1000); updateClock();
+
+// ─── Chart.js setup ──────────────────────────────────────────────
+Chart.defaults.color = '#64748b';
+Chart.defaults.borderColor = 'rgba(99,179,237,0.08)';
+
+const bwCtx = document.getElementById('bwChart').getContext('2d');
+const bwGrad = bwCtx.createLinearGradient(0, 0, 0, 200);
+bwGrad.addColorStop(0, 'rgba(56,189,248,0.25)');
+bwGrad.addColorStop(1, 'rgba(56,189,248,0)');
+
+const bwChart = new Chart(bwCtx, {
+  type: 'line',
+  data: {
+    labels: new Array(60).fill(''),
+    datasets: [{
+      data: bwHistory,
+      borderColor: '#38bdf8',
+      backgroundColor: bwGrad,
+      borderWidth: 2,
+      pointRadius: 0,
+      fill: true,
+      tension: 0.4
+    }, {
+      data: new Array(60).fill(900),
+      borderColor: 'rgba(244,63,94,0.4)',
+      borderWidth: 1,
+      borderDash: [4, 4],
+      pointRadius: 0,
+      fill: false,
+      label: 'Threshold'
+    }]
+  },
+  options: {
+    responsive: true,
+    animation: { duration: 300 },
+    plugins: { legend: { display: false }, tooltip: {
+      callbacks: { label: ctx => ` ${ctx.raw} Mbps` }
+    }},
+    scales: {
+      x: { grid: { display: false }, ticks: { display: false } },
+      y: { grid: { color: 'rgba(99,179,237,0.07)' },
+           ticks: { font: { family: 'Space Mono', size: 9 }, callback: v => v + ' M' } }
+    }
+  }
+});
+
+const ppsCtx = document.getElementById('ppsChart').getContext('2d');
+const ppsGrad = ppsCtx.createLinearGradient(0, 0, 0, 120);
+ppsGrad.addColorStop(0, 'rgba(129,140,248,0.2)');
+ppsGrad.addColorStop(1, 'rgba(129,140,248,0)');
+
+const ppsChart = new Chart(ppsCtx, {
+  type: 'bar',
+  data: {
+    labels: new Array(30).fill(''),
+    datasets: [{ data: ppsHistory, backgroundColor: ppsGrad, borderColor: '#818cf8', borderWidth: 1, borderRadius: 2 }]
+  },
+  options: {
+    responsive: true,
+    animation: { duration: 200 },
+    plugins: { legend: { display: false } },
+    scales: {
+      x: { grid: { display: false }, ticks: { display: false } },
+      y: { grid: { color: 'rgba(99,179,237,0.07)' }, ticks: { font: { family: 'Space Mono', size: 9 }, callback: v => (v/1000).toFixed(0)+'K' } }
+    }
+  }
+});
+
+const PROTO_COLORS = ['#38bdf8', '#818cf8', '#34d399', '#fb923c', '#f43f5e'];
+const protoChart = new Chart(document.getElementById('protoChart').getContext('2d'), {
+  type: 'doughnut',
+  data: {
+    labels: ['TCP','UDP','ICMP','HTTP','HTTPS'],
+    datasets: [{ data: [60,20,5,5,10], backgroundColor: PROTO_COLORS, borderWidth: 0, hoverOffset: 4 }]
+  },
+  options: {
+    responsive: false,
+    cutout: '68%',
+    plugins: { legend: { display: false }, tooltip: {
+      callbacks: { label: ctx => ` ${ctx.label}: ${ctx.raw}%` }
+    }}
+  }
+});
+
+// Proto legend
+const legendEl = document.getElementById('protoLegend');
+['TCP','UDP','ICMP','HTTP','HTTPS'].forEach((p, i) => {
+  legendEl.innerHTML += `<div class="legend-item"><div class="legend-dot" style="background:${PROTO_COLORS[i]}"></div>${p}</div>`;
+});
+
+// ─── Gauge ───────────────────────────────────────────────────────
+function updateGauge(pct) {
+  const total = 175.9;
+  const offset = total - (total * Math.min(pct, 100) / 100);
+  const path = document.getElementById('gaugePath');
+  path.style.strokeDashoffset = offset;
+  path.style.stroke = pct > 90 ? '#f43f5e' : pct > 70 ? '#fb923c' : '#38bdf8';
+  const valEl = document.getElementById('gaugeValue');
+  valEl.innerHTML = `${pct.toFixed(0)}<span style="font-size:1rem">%</span>`;
+  valEl.style.color = pct > 90 ? '#f43f5e' : pct > 70 ? '#fb923c' : '#38bdf8';
+}
+
+// ─── KPI Update ──────────────────────────────────────────────────
+function setKpi(id, val, unit='') {
+  document.getElementById(`kpi-${id}`).innerHTML = `${val}<span class="kpi-unit">${unit}</span>`;
+}
+
+function setKpiState(cardId, state) {
+  const card = document.getElementById(`kpiCard-${cardId}`);
+  card.className = 'kpi-card' + (state ? ' ' + state : '');
+}
+
+function setDelta(id, cur, prev, flip=false) {
+  const el = document.getElementById(`kpi-${id}-delta`);
+  if (!el) return;
+  const diff = cur - prev;
+  const sign = diff > 0 ? '+' : '';
+  const cls = flip ? (diff > 0 ? 'up' : 'down') : (diff > 0 ? 'up' : 'down');
+  el.className = 'kpi-delta ' + cls;
+  el.textContent = `${sign}${Math.abs(diff).toFixed(0)} from last`;
+}
+
+// ─── Traffic Update ──────────────────────────────────────────────
+socket.on('traffic_update', d => {
+  // Banner
+  const banner = document.getElementById('ddosBanner');
+  const dot = document.getElementById('statusDot');
+  if (d.ddos_active) {
+    banner.classList.add('active');
+    dot.classList.add('danger');
+    document.getElementById('ddosDetail').textContent = `Traffic spike detected — ${d.bandwidth_mbps.toFixed(0)} Mbps`;
+  } else {
+    banner.classList.remove('active');
+    dot.classList.remove('danger');
+  }
+
+  // Bandwidth chart
+  bwHistory.push(d.bandwidth_mbps);
+  bwHistory.shift();
+  bwChart.data.datasets[0].data = [...bwHistory];
+  const isHigh = d.bandwidth_mbps > 900;
+  bwChart.data.datasets[0].borderColor = isHigh ? '#f43f5e' : '#38bdf8';
+  bwChart.update('none');
+  document.getElementById('bwBadge').textContent = isHigh ? '⚠ EXCEEDED' : 'NOMINAL';
+  document.getElementById('bwBadge').style.color = isHigh ? '#f43f5e' : '';
+
+  // PPS chart
+  ppsHistory.push(d.packets_per_sec);
+  ppsHistory.shift();
+  ppsChart.data.datasets[0].data = [...ppsHistory];
+  ppsChart.update('none');
+
+  // Protocol donut
+  const proto = d.protocol_split;
+  protoChart.data.datasets[0].data = Object.values(proto);
+  protoChart.update('none');
+
+  // KPIs
+  const bw = d.bandwidth_mbps;
+  setKpi('bw', bw.toFixed(1), 'Mbps');
+  setKpiState('bw', bw > 900 ? 'danger' : bw > 700 ? 'warn' : '');
+  setDelta('bw', bw, lastBw);
+  lastBw = bw;
+
+  setKpi('pps', d.packets_per_sec.toLocaleString(), 'pps');
+  setKpiState('pps', d.packets_per_sec > 50000 ? 'danger' : '');
+  setDelta('pps', d.packets_per_sec, lastPps);
+  lastPps = d.packets_per_sec;
+
+  setKpi('conn', d.active_connections.toLocaleString());
+  setKpiState('conn', d.active_connections > 2000 ? 'danger' : d.active_connections > 1000 ? 'warn' : '');
+  setDelta('conn', d.active_connections, lastConn);
+  lastConn = d.active_connections;
+
+  setKpi('latency', d.latency_ms, 'ms');
+  setKpiState('latency', d.latency_ms > 100 ? 'danger' : d.latency_ms > 30 ? 'warn' : '');
+  document.getElementById('kpi-dropped').textContent = `${d.dropped_packets.toLocaleString()} dropped pkts`;
+
+  document.getElementById('pktCounter').textContent = `${d.packets_per_sec.toLocaleString()} PKT/S`;
+
+  // Gauge
+  updateGauge((bw / 1000) * 100);
+
+  // IP Table
+  updateIPTable(d.ip_breakdown);
+
+  // Top conns
+  updateTopConns(d.ip_breakdown);
+});
+
+// ─── IP Table ────────────────────────────────────────────────────
+function updateIPTable(ips) {
+  const tbody = document.getElementById('ipTableBody');
+  const maxBw = Math.max(...ips.map(i => i.bandwidth), 1);
+  const hasThreat = ips.some(i => i.type === 'malicious');
+  document.getElementById('maliciousBadge').style.display = hasThreat ? '' : 'none';
+  document.getElementById('ipCountBadge').textContent = `${ips.length} IPs`;
+
+  tbody.innerHTML = ips.map(ip => {
+    const pct = (ip.bandwidth / maxBw * 100).toFixed(0);
+    const isDanger = ip.type === 'malicious';
+    return `
+    <tr style="${isDanger ? 'background:rgba(244,63,94,0.04)' : ''}">
+      <td style="font-family:var(--mono);color:${isDanger ? 'var(--danger)' : 'var(--text)'}">${ip.ip}</td>
+      <td style="color:var(--muted)">${ip.country}</td>
+      <td><span class="ip-badge ${ip.type}">${ip.type.toUpperCase()}</span></td>
+      <td style="color:${ip.connections > 500 ? 'var(--danger)' : 'var(--text)'}">${ip.connections.toLocaleString()}</td>
+      <td>${ip.bandwidth.toFixed(1)} Mbps</td>
+      <td style="color:var(--muted)">${ip.packets.toLocaleString()}</td>
+      <td class="bar-cell">
+        <div class="conn-bar-wrap">
+          <div class="mini-bar" style="flex:1">
+            <div class="mini-bar-fill ${isDanger ? 'danger' : ''}" style="width:${pct}%"></div>
+          </div>
+          <span class="conn-val">${pct}%</span>
+        </div>
+      </td>
+    </tr>`;
+  }).join('');
+}
+
+// ─── Top Connections ──────────────────────────────────────────────
+function updateTopConns(ips) {
+  const sorted = [...ips].sort((a,b) => b.connections - a.connections).slice(0, 5);
+  const maxC = sorted[0]?.connections || 1;
+  document.getElementById('topConnList').innerHTML = sorted.map(ip => {
+    const pct = (ip.connections / maxC * 100).toFixed(0);
+    const isDanger = ip.type === 'malicious';
+    return `<div>
+      <div style="display:flex;justify-content:space-between;font-family:var(--mono);font-size:0.65rem;margin-bottom:3px">
+        <span style="color:${isDanger ? 'var(--danger)' : 'var(--muted)'}">${ip.ip}</span>
+        <span style="color:var(--text)">${ip.connections}</span>
+      </div>
+      <div class="mini-bar"><div class="mini-bar-fill ${isDanger ? 'danger' : ''}" style="width:${pct}%"></div></div>
+    </div>`;
+  }).join('');
+}
+
+// ─── Alerts ──────────────────────────────────────────────────────
+function renderAlert(a) {
+  const el = document.createElement('div');
+  el.className = `alert-item ${a.level}`;
+  const t = new Date(a.time).toLocaleTimeString('en-US', {hour12: false});
+  el.innerHTML = `
+    <div class="alert-level">[${a.level.toUpperCase()}] ${t}</div>
+    <div class="alert-title">${a.title}</div>
+    ${a.ip ? `<div class="alert-ip">→ ${a.ip}</div>` : ''}`;
+  return el;
+}
+
+socket.on('new_alert', a => {
+  const list = document.getElementById('alertsList');
+  list.prepend(renderAlert(a));
+  while (list.children.length > 50) list.lastChild.remove();
+  updateAlertCount();
+  if (a.level === 'critical') showToast(a.title, true);
+});
+
+socket.on('alerts_init', alerts => {
+  const list = document.getElementById('alertsList');
+  alerts.forEach(a => list.appendChild(renderAlert(a)));
+  updateAlertCount();
+});
+
+function updateAlertCount() {
+  const count = document.getElementById('alertsList').children.length;
+  document.getElementById('alertCount').textContent = count ? `(${count})` : '';
+}
+
+function clearAlerts() {
+  document.getElementById('alertsList').innerHTML = '';
+  updateAlertCount();
+}
+
+// ─── Toast ───────────────────────────────────────────────────────
+function showToast(msg, danger=false) {
+  const t = document.createElement('div');
+  t.className = `toast${danger ? ' danger' : ''}`;
+  t.textContent = `🚨 ${msg}`;
+  document.getElementById('toasts').prepend(t);
+  setTimeout(() => t.remove(), 3400);
+}
+
+// ─── Settings ────────────────────────────────────────────────────
+function openSettings() { document.getElementById('modalOverlay').classList.add('open'); }
+function closeSettings() { document.getElementById('modalOverlay').classList.remove('open'); }
+
+async function saveSettings() {
+  const thr = {
+    bandwidth_mbps: +document.getElementById('cfgBw').value,
+    packets_per_sec: +document.getElementById('cfgPps').value,
+    connections_per_ip: +document.getElementById('cfgConn').value,
+    ddos_spike_ratio: +document.getElementById('cfgDdos').value,
+  };
+  await fetch('/api/thresholds', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(thr) });
+
+  const email = {
+    smtp_host: document.getElementById('cfgSmtp').value,
+    smtp_port: +document.getElementById('cfgPort').value,
+    username: document.getElementById('cfgUser').value,
+    password: document.getElementById('cfgPass').value,
+    recipient: document.getElementById('cfgRecipient').value,
+    enabled: !!document.getElementById('cfgUser').value,
+  };
+  await fetch('/api/email', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(email) });
+
+  closeSettings();
+  showToast('Configuration saved successfully');
+}
+</script>
+</body>
+</html>
